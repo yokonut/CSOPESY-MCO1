@@ -57,7 +57,8 @@ int getIntegerInput() {
 
 // Marquee Logic
 void marquee(int width) {
-    size_t i = 0;
+    int pos = 0;
+    int dir = 1; // 1 = right, -1 = left
     while (marquee_running) {
         std::string current_text;
         int current_speed;
@@ -66,13 +67,18 @@ void marquee(int width) {
             current_text = marquee_text;
             current_speed = marquee_speed;
         }
-        std::string padded = std::string(width, ' ') + current_text + std::string(width, ' ');
-        if (i >= padded.size() - width) i = 0;
-        cout << "\r" << padded.substr(i, width) << flush;
+
+        std::string padded(width, ' ');
+        int start = std::max(0, pos);
+        padded.replace(start, current_text.size(), current_text);
+
+        cout << "\r" << padded.substr(0, width) << flush;
         std::this_thread::sleep_for(std::chrono::milliseconds(current_speed));
-        ++i;
+
+        pos += dir;
+        if (pos <= 0 || pos + (int)current_text.size() >= width) dir = -dir;
     }
-    cout << "\r" << std::string(width, ' ') << flush; // Clear line
+    cout << "\r" << std::string(width, ' ') << flush;
 }
 
 void startMarquee() {
