@@ -6,14 +6,62 @@
 #include <string>
 #include <atomic>
 #include <mutex>
+#include <map>
 using namespace std;
 
 std::atomic<bool> marquee_running(false);
 std::thread marquee_thread;
-std::string marquee_text = " Multi-tasking marquee running... ";
+std::vector<std::string> marquee_ascii; // Stores ASCII art text lines
 int marquee_speed = 100;
 int marquee_width = 0;
-std::mutex marquee_mutex; // Protects marquee_text and marquee_speed
+std::mutex marquee_mutex; // Protects marquee_ascii and marquee_speed
+
+// ASCII Art Font (Blocky Letters A-Z, Space)
+map<char, vector<string>> asciiFont = {
+    {'A', {"  ##  ", " #  # ", " #### ", " #  # ", " #  # "}},
+    {'B', {" ###  ", " #  # ", " ###  ", " #  # ", " ###  "}},
+    {'C', {"  ### ", " #    ", " #    ", " #    ", "  ### "}},
+    {'D', {" ###  ", " #  # ", " #  # ", " #  # ", " ###  "}},
+    {'E', {" #### ", " #    ", " ###  ", " #    ", " #### "}},
+    {'F', {" #### ", " #    ", " ###  ", " #    ", " #    "}},
+    {'G', {"  ### ", " #    ", " # ## ", " #  # ", "  ### "}},
+    {'H', {" #  # ", " #  # ", " #### ", " #  # ", " #  # "}},
+    {'I', {" ### ", "  # ", "  # ", "  # ", " ### "}},
+    {'J', {"   ## ", "    # ", "    # ", " #  # ", "  ##  "}},
+    {'K', {" #  # ", " # #  ", " ##   ", " # #  ", " #  # "}},
+    {'L', {" #    ", " #    ", " #    ", " #    ", " #### "}},
+    {'M', {" #   # ", " ## ## ", " # # # ", " #   # ", " #   # "}},
+    {'N', {" #   # ", " ##  # ", " # # # ", " #  ## ", " #   # "}},
+    {'O', {"  ##  ", " #  # ", " #  # ", " #  # ", "  ##  "}},
+    {'P', {" ###  ", " #  # ", " ###  ", " #    ", " #    "}},
+    {'Q', {"  ##  ", " #  # ", " #  # ", " # ## ", "  ### "}},
+    {'R', {" ###  ", " #  # ", " ###  ", " # #  ", " #  # "}},
+    {'S', {"  ### ", " #    ", "  ##  ", "    # ", " ###  "}},
+    {'T', {" ##### ", "   #   ", "   #   ", "   #   ", "   #   "}},
+    {'U', {" #  # ", " #  # ", " #  # ", " #  # ", "  ##  "}},
+    {'V', {" #   # ", " #   # ", " #   # ", "  # #  ", "   #   "}},
+    {'W', {" #   # ", " #   # ", " # # # ", " ## ## ", " #   # "}},
+    {'X', {" #   # ", "  # #  ", "   #   ", "  # #  ", " #   # "}},
+    {'Y', {" #   # ", "  # #  ", "   #   ", "   #   ", "   #   "}},
+    {'Z', {" #### ", "    # ", "   #  ", "  #   ", " #### "}},
+    {' ', {"      ", "      ", "      ", "      ", "      "}}
+};
+
+// Convert normal text into ASCII art (line by line)
+vector<string> textToAscii(const string& text) {
+    vector<string> output(5, ""); // 5 rows tall
+    bool first = true;
+    for (char c : text) {
+        char up = toupper(c);
+        if (asciiFont.find(up) == asciiFont.end()) up = ' ';
+        for (int i = 0; i < 5; i++) {
+            if (!first) output[i] += " "; // single space between letters
+            output[i] += asciiFont[up][i];
+        }
+        first = false;
+    }
+    return output;
+}
 
 void showMainMenu() {
     cout << "Marquee Main Menu\n";
@@ -26,8 +74,8 @@ void showHelp() {
     cout << "\nAvailable commands:\n";
     cout << "1. start_marquee - starts the marquee animation.\n";
     cout << "2. stop_marquee - stops the marquee animation.\n";
-    cout << "3. set_text - Accepts a text input and displays it as a marquee.\n";
-    cout << "4. set_speed - sets the marquee animation refresh in milliseconds.\n";
+    cout << "3. set_text - Accepts text and converts it to ASCII marquee.\n";
+    cout << "4. set_speed - sets the marquee animation refresh in ms.\n";
     cout << "5. exit - terminates the console.\n\n";
 }
 
@@ -35,7 +83,6 @@ void displayMessage(const string& msg) {
     cout << msg << endl;
 }
 
-// Keyboard Handler
 string getCommandInput() {
     string cmd;
     cin >> cmd;
@@ -55,37 +102,47 @@ int getIntegerInput() {
     return value;
 }
 
-// Marquee Logic
+// ASCII Marquee
 void marquee(int width) {
-    int pos = 0;
-    int dir = 1; // 1 = right, -1 = left
+    int pos = width;
     while (marquee_running) {
-        std::string current_text;
+        vector<string> current_ascii;
         int current_speed;
         {
             std::lock_guard<std::mutex> lock(marquee_mutex);
-            current_text = marquee_text;
+            current_ascii = marquee_ascii;
             current_speed = marquee_speed;
         }
 
-        std::string padded(width, ' ');
-        int start = std::max(0, pos);
-        padded.replace(start, current_text.size(), current_text);
+        for (int row = 0; row < current_ascii.size(); row++) {
+            string ascii_line = current_ascii[row];
+            if (row == 0) {
+                size_t endpos = ascii_line.find_last_not_of(" ");
+                if (endpos != string::npos) {
+                    ascii_line = ascii_line.substr(0, endpos + 1);
+                }
+            }
+            string padded(width + ascii_line.size(), ' ');
+            int start = max(0, pos);
+            if (start < padded.size())
+                padded.replace(start, ascii_line.size(), ascii_line);
 
-        cout << "\r" << padded.substr(0, width) << flush;
-        std::this_thread::sleep_for(std::chrono::milliseconds(current_speed));
+            cout << padded.substr(0, width) << "\n";
+        }
 
-        pos += dir;
-        if (pos <= 0 || pos + (int)current_text.size() >= width) dir = -dir;
+        this_thread::sleep_for(std::chrono::milliseconds(current_speed));
+
+        pos--;
+        if (pos + (int)current_ascii[0].size() < 0) pos = width; // loop back
     }
-    cout << "\r" << std::string(width, ' ') << flush;
+
 }
 
 void startMarquee() {
     if (!marquee_running) {
         marquee_running = true;
         marquee_thread = std::thread(marquee, marquee_width);
-        displayMessage("Starting marquee...");
+        displayMessage("Starting ASCII marquee...");
     } else {
         displayMessage("Marquee is already running.");
     }
@@ -129,22 +186,22 @@ int main() {
             stopMarquee();
         }
         else if (command == "set_text") {
-            displayMessage("Enter text for marquee: ");
+            displayMessage("Enter text for ASCII marquee: ");
             std::string new_text = getTextInput();
             {
                 std::lock_guard<std::mutex> lock(marquee_mutex);
-                marquee_text = new_text;
+                marquee_ascii = textToAscii(new_text);
             }
-            displayMessage("Text set to: " + new_text);
+            displayMessage("ASCII marquee set!");
         }
         else if (command == "set_speed") {
             displayMessage("Enter speed in milliseconds: ");
             int new_speed = getIntegerInput();
             {
                 std::lock_guard<std::mutex> lock(marquee_mutex);
-                marquee_speed = new_speed;
+                marquee_speed = (new_speed < 10) ? 10 : new_speed; // avoid too fast
             }
-            displayMessage("Speed set to: " + std::to_string(new_speed) + " ms");
+            displayMessage("Speed set to: " + std::to_string(marquee_speed) + " ms");
         }
         else if (command == "exit") {
             displayMessage("Exiting...");
