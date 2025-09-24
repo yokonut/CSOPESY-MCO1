@@ -7,7 +7,7 @@ Lorenzo Donaire, Yohan Ko, Margaux Siongco, Wesley Sy
 
 
 1. Project Description
-Our project implements a simple OS emulator with a text-based 
+- Our project implements a simple OS emulator with a text-based 
 marquee operator. The program provides a command-line interface 
 (CLI) that accepts commands such as to start/stop the marquee, 
 set text, and configure speed, request help, or exit the console. It mimics a shell environment 
