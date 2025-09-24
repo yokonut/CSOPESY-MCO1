@@ -48,8 +48,21 @@ and marquee animation.
 - Type commands as instructed in the main menu.
 -----------------------------------------------
 
+6. Example Usage
+After running, type the following commands:
 
-6. File Structure
+> help  
+> set_text  
+HELLO WORLD  
+> set_speed  
+100  
+> start_marquee  
+> stop_marquee  
+> exit
+--------------------------------
+
+
+7. File Structure
 - main.cpp     – Entry point of the program (contains main()).
 - README.txt   – Project description and usage instructions.
 ------------------------------------------------------------
