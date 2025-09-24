@@ -28,12 +28,12 @@ and marquee animation.
 
 3. Commands
 --------------------------------
-help          – Displays available commands.
-start_marquee – Starts the marquee animation.
-stop_marquee  – Stops the marquee animation. 
-set_text      – Accepts a text input and displays it as marquee.
-set_speed     – Sets marquee refresh speed in milliseconds. 
-exit          – Terminates the program.
+1. help          – Displays available commands.
+2. start_marquee – Starts the marquee animation.
+3. stop_marquee  – Stops the marquee animation. 
+4. set_text      – Accepts a text input and displays it as marquee.
+5. set_speed     – Sets marquee refresh speed in milliseconds. 
+6. exit          – Terminates the program.
 
 
 4. Requirements
