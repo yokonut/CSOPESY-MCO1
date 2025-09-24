@@ -54,7 +54,7 @@ and marquee animation.
 - README.txt   – Project description and usage instructions.
 ------------------------------------------------------------
 
-=============
+
 End of README
-==============
+
 
