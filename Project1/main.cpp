@@ -10,18 +10,28 @@
 #include <algorithm>
 using namespace std;
 
-std::atomic<bool> marquee_running(false);
-std::thread marquee_thread;
-std::vector<std::string> marquee_ascii; // Stores ASCII art text lines
-std::string marquee_text; // Stores plain text for screensaver
-int marquee_speed = 100;
-int marquee_width = 0;
-int marquee_height = 0;
-std::mutex marquee_mutex; // Protects marquee_ascii, marquee_text, marquee_speed
-std::mutex io_mutex; // Protects console I/O operations
-std::string animation_mode = "ascii"; // "ascii" or "screensaver"
+// =====================
+// OS Emulator Components
+// =====================
 
-// ASCII Art Font (Blocky Letters A-Z, Space)
+// --- Marquee Logic State ---
+std::atomic<bool> marquee_running(false); // Controls whether marquee animation is running
+std::thread marquee_thread;               // Thread for running marquee or screensaver animation
+std::vector<std::string> marquee_ascii;   // Stores ASCII art text lines for ASCII marquee mode
+std::string marquee_text;                 // Stores plain text for screensaver mode
+int marquee_speed = 100;                  // Animation speed in milliseconds
+int marquee_width = 0;                    // Console width
+int marquee_height = 0;                   // Console height
+std::mutex marquee_mutex;                 // Protects marquee_ascii, marquee_text, marquee_speed
+std::mutex io_mutex;                      // Protects console I/O operations (for screensaver)
+std::string animation_mode = "ascii";     // Current animation mode: "ascii" or "screensaver"
+
+// =====================
+// Display Handler
+// =====================
+
+// --- ASCII Art Font (Blocky Letters A-Z, Space) ---
+// Used for converting text to ASCII art for marquee
 map<char, vector<string>> asciiFont = {
     {'A', {"  ##  ", " #  # ", " #### ", " #  # ", " #  # "}},
     {'B', {" ###  ", " #  # ", " ###  ", " #  # ", " ###  "}},
@@ -52,7 +62,7 @@ map<char, vector<string>> asciiFont = {
     {' ', {"      ", "      ", "      ", "      ", "      "}}
 };
 
-// Convert normal text into ASCII art (line by line)
+// Converts normal text into ASCII art (line by line)
 vector<string> textToAscii(const string& text) {
     vector<string> output(5, ""); // 5 rows tall
     bool first = true;
@@ -70,6 +80,7 @@ vector<string> textToAscii(const string& text) {
 
 // Helper functions for console operations
 void queryConsoleSize(int& cols, int& rows) {
+    // Gets the current size of the console window
     CONSOLE_SCREEN_BUFFER_INFO csbi;
     GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi);
     cols = csbi.srWindow.Right - csbi.srWindow.Left + 1;
@@ -77,10 +88,12 @@ void queryConsoleSize(int& cols, int& rows) {
 }
 
 void setCursorPos(short x, short y) {
+    // Sets the cursor position in the console
     COORD coord = { x, y };
     SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), coord);
 }
 
+// Displays the main menu
 void showMainMenu() {
     cout << "Marquee Main Menu\n";
     cout << "=================\n";
@@ -88,6 +101,7 @@ void showMainMenu() {
     cout << "\nCommand input: ";
 }
 
+// Displays help information
 void showHelp() {
     cout << "\nAvailable commands:\n";
     cout << "1. start_marquee - starts the marquee animation.\n";
@@ -98,16 +112,23 @@ void showHelp() {
     cout << "6. exit - terminates the console.\n\n";
 }
 
+// Displays a message to the user
 void displayMessage(const string& msg) {
     cout << msg << endl;
 }
 
+// =====================
+// Keyboard Handler
+// =====================
+
+// Reads a command from the user
 string getCommandInput() {
     string cmd;
     cin >> cmd;
     return cmd;
 }
 
+// Reads a line of text from the user
 string getTextInput() {
     string text;
     cin.ignore();
@@ -115,13 +136,19 @@ string getTextInput() {
     return text;
 }
 
+// Reads an integer value from the user
 int getIntegerInput() {
     int value;
     cin >> value;
     return value;
 }
 
-// ASCII Marquee
+// =====================
+// Marquee Logic
+// =====================
+
+// --- ASCII Marquee Animation ---
+// Animate ASCII art text scrolling horizontally
 void marquee(int width) {
     int pos = width;
     while (marquee_running) {
@@ -135,6 +162,7 @@ void marquee(int width) {
 
         for (int row = 0; row < current_ascii.size(); row++) {
             string ascii_line = current_ascii[row];
+            // Trim trailing spaces for the first row (for better appearance)
             if (row == 0) {
                 size_t endpos = ascii_line.find_last_not_of(" ");
                 if (endpos != string::npos) {
@@ -152,23 +180,20 @@ void marquee(int width) {
         this_thread::sleep_for(std::chrono::milliseconds(current_speed));
 
         pos--;
-        if (pos + (int)current_ascii[0].size() < 0) pos = width; // loop back
+        // Loop back when text has fully scrolled out
+        if (pos + (int)current_ascii[0].size() < 0) pos = width;
     }
-
 }
 
+// --- Screensaver Animation ---
+// Animates plain text bouncing around the console window
 void screenSaver() {
-    // initial position and direction
-    int x = 0;
-    int y = 0;
-    int dx = 1;
-    int dy = 1;
+    int x = 0, y = 0, dx = 1, dy = 1;
     while (marquee_running) {
         std::string current_text;
         int current_speed;
         int cols, rows;
-        // Always query latest console size to react to window resizes
-        queryConsoleSize(cols, rows);
+        queryConsoleSize(cols, rows); // Always query latest console size
         {
             std::lock_guard<std::mutex> lock(marquee_mutex);
             marquee_width = cols;
@@ -181,24 +206,22 @@ void screenSaver() {
         const int maxX = max(0, cols - textLen);
         const int maxRow = max(0, rows - 2); // avoid last line for input
 
-        // erase previous
+        // Erase previous text
         {
             std::lock_guard<std::mutex> lock(io_mutex);
             setCursorPos(static_cast<short>(x), static_cast<short>(y));
             cout << string(textLen, ' ');
         }
 
-        // step
+        // Update position and direction
         x += dx;
         y += dy;
-
         if (x <= 0) { x = 0; dx = 1; }
         else if (x >= maxX) { x = maxX; dx = -1; }
-
         if (y <= 0) { y = 0; dy = 1; }
         else if (y >= maxRow) { y = maxRow; dy = -1; }
 
-        // draw new
+        // Draw new text
         {
             std::lock_guard<std::mutex> lock(io_mutex);
             setCursorPos(static_cast<short>(x), static_cast<short>(y));
@@ -208,10 +231,9 @@ void screenSaver() {
 
         std::this_thread::sleep_for(std::chrono::milliseconds(current_speed));
     }
-    // clear last position when stopping
+    // Clear last position when stopping
     {
         std::lock_guard<std::mutex> lock(io_mutex);
-        // best effort: clear entire first rows area where text might be
         for (int r = 0; r < max(0, marquee_height - 1); ++r) {
             setCursorPos(0, static_cast<short>(r));
             cout << string(marquee_width, ' ');
@@ -221,6 +243,7 @@ void screenSaver() {
     }
 }
 
+// Start marquee or screensaver animation in a separate thread
 void startMarquee() {
     if (!marquee_running) {
         marquee_running = true;
@@ -238,6 +261,7 @@ void startMarquee() {
     }
 }
 
+// Stop the marquee or screensaver animation
 void stopMarquee() {
     if (marquee_running) {
         marquee_running = false;
@@ -250,8 +274,12 @@ void stopMarquee() {
     }
 }
 
+// =====================
+// Command Interpreter
+// =====================
+
 int main() {
-    // Get console size
+    // Query initial console size
     CONSOLE_SCREEN_BUFFER_INFO csbi;
     GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi);
     marquee_width = csbi.srWindow.Right - csbi.srWindow.Left + 1;
@@ -262,7 +290,7 @@ int main() {
 
     string command;
 
-    // Command Interpreter Loop
+    // Main command loop: accepts commands and controls marquee logic
     do {
         showMainMenu();
         command = getCommandInput();
@@ -271,6 +299,7 @@ int main() {
             showHelp();
         }
         else if (command == "start_marquee") {
+            // Only start if text is set for the selected mode
             if (animation_mode == "ascii" && marquee_ascii.empty()) {
                 displayMessage("No ASCII text set. Use 'set_text' command first.");
                 continue;
@@ -289,8 +318,8 @@ int main() {
             std::string new_text = getTextInput();
             {
                 std::lock_guard<std::mutex> lock(marquee_mutex);
-                marquee_ascii = textToAscii(new_text);
-                marquee_text = new_text;
+                marquee_ascii = textToAscii(new_text); // Convert to ASCII art
+                marquee_text = new_text; // Store plain text
             }
             displayMessage("Text set for both ASCII marquee and screensaver!");
         }
@@ -299,9 +328,9 @@ int main() {
             int new_speed = getIntegerInput();
             {
                 std::lock_guard<std::mutex> lock(marquee_mutex);
-                marquee_speed = (new_speed < 10) ? 10 : new_speed; // avoid too fast
+                marquee_speed = (new_speed < 10) ? 10 : new_speed; // Not too fast
             }
-            displayMessage("Speed set to: " + std::to_string(marquee_speed) + " ms");
+            displayMessage("Speed set to: " + std::to_string(new_speed) + " ms");
         }
         else if (command == "set_mode") {
             displayMessage("Enter mode ('ascii' or 'screensaver'): ");
