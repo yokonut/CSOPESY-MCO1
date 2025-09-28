@@ -1,53 +1,107 @@
 #include <iostream>
-#define NOMINMAX 1
 #include <windows.h>
+#include <vector>
 #include <thread>
 #include <chrono>
 #include <string>
 #include <atomic>
 #include <mutex>
-#include <limits>
+#include <map>
 #include <algorithm>
 using namespace std;
 
 std::atomic<bool> marquee_running(false);
 std::thread marquee_thread;
-std::string marquee_text = "GIT GUD";
+std::vector<std::string> marquee_ascii; // Stores ASCII art text lines
+std::string marquee_text; // Stores plain text for screensaver
 int marquee_speed = 100;
 int marquee_width = 0;
 int marquee_height = 0;
-std::mutex marquee_mutex;
-std::mutex io_mutex; 
+std::mutex marquee_mutex; // Protects marquee_ascii, marquee_text, marquee_speed
+std::mutex io_mutex; // Protects console I/O operations
+std::string animation_mode = "ascii"; // "ascii" or "screensaver"
+
+// ASCII Art Font (Blocky Letters A-Z, Space)
+map<char, vector<string>> asciiFont = {
+    {'A', {"  ##  ", " #  # ", " #### ", " #  # ", " #  # "}},
+    {'B', {" ###  ", " #  # ", " ###  ", " #  # ", " ###  "}},
+    {'C', {"  ### ", " #    ", " #    ", " #    ", "  ### "}},
+    {'D', {" ###  ", " #  # ", " #  # ", " #  # ", " ###  "}},
+    {'E', {" #### ", " #    ", " ###  ", " #    ", " #### "}},
+    {'F', {" #### ", " #    ", " ###  ", " #    ", " #    "}},
+    {'G', {"  ### ", " #    ", " # ## ", " #  # ", "  ### "}},
+    {'H', {" #  # ", " #  # ", " #### ", " #  # ", " #  # "}},
+    {'I', {" ### ", "  # ", "  # ", "  # ", " ### "}},
+    {'J', {"   ## ", "    # ", "    # ", " #  # ", "  ##  "}},
+    {'K', {" #  # ", " # #  ", " ##   ", " # #  ", " #  # "}},
+    {'L', {" #    ", " #    ", " #    ", " #    ", " #### "}},
+    {'M', {" #   # ", " ## ## ", " # # # ", " #   # ", " #   # "}},
+    {'N', {" #   # ", " ##  # ", " # # # ", " #  ## ", " #   # "}},
+    {'O', {"  ##  ", " #  # ", " #  # ", " #  # ", "  ##  "}},
+    {'P', {" ###  ", " #  # ", " ###  ", " #    ", " #    "}},
+    {'Q', {"  ##  ", " #  # ", " #  # ", " # ## ", "  ### "}},
+    {'R', {" ###  ", " #  # ", " ###  ", " # #  ", " #  # "}},
+    {'S', {"  ### ", " #    ", "  ##  ", "    # ", " ###  "}},
+    {'T', {" ##### ", "   #   ", "   #   ", "   #   ", "   #   "}},
+    {'U', {" #  # ", " #  # ", " #  # ", " #  # ", "  ##  "}},
+    {'V', {" #   # ", " #   # ", " #   # ", "  # #  ", "   #   "}},
+    {'W', {" #   # ", " #   # ", " # # # ", " ## ## ", " #   # "}},
+    {'X', {" #   # ", "  # #  ", "   #   ", "  # #  ", " #   # "}},
+    {'Y', {" #   # ", "  # #  ", "   #   ", "   #   ", "   #   "}},
+    {'Z', {" #### ", "    # ", "   #  ", "  #   ", " #### "}},
+    {' ', {"      ", "      ", "      ", "      ", "      "}}
+};
+
+// Convert normal text into ASCII art (line by line)
+vector<string> textToAscii(const string& text) {
+    vector<string> output(5, ""); // 5 rows tall
+    bool first = true;
+    for (char c : text) {
+        char up = toupper(c);
+        if (asciiFont.find(up) == asciiFont.end()) up = ' ';
+        for (int i = 0; i < 5; i++) {
+            if (!first) output[i] += " "; // single space between letters
+            output[i] += asciiFont[up][i];
+        }
+        first = false;
+    }
+    return output;
+}
+
+// Helper functions for console operations
+void queryConsoleSize(int& cols, int& rows) {
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi);
+    cols = csbi.srWindow.Right - csbi.srWindow.Left + 1;
+    rows = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
+}
+
+void setCursorPos(short x, short y) {
+    COORD coord = { x, y };
+    SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), coord);
+}
 
 void showMainMenu() {
-    std::lock_guard<std::mutex> lock(io_mutex);
     cout << "Marquee Main Menu\n";
     cout << "=================\n";
-    cout << "Type 'help' to see available commands.\n\n";
+    cout << "Type 'help' to see available commands.\n";
+    cout << "\nCommand input: ";
 }
 
 void showHelp() {
-    std::lock_guard<std::mutex> lock(io_mutex);
     cout << "\nAvailable commands:\n";
-    cout << "1. start_marquee - starts the bouncing screensaver.\n";
-    cout << "2. stop_marquee - stops the animation.\n";
-    cout << "3. set_text - sets the bouncing label text.\n";
-    cout << "4. set_speed - sets the marquee animation refresh in milliseconds.\n";
-    cout << "5. exit - terminates the console.\n\n";
+    cout << "1. start_marquee - starts the marquee animation.\n";
+    cout << "2. stop_marquee - stops the marquee animation.\n";
+    cout << "3. set_text - Accepts text and converts it to ASCII marquee.\n";
+    cout << "4. set_speed - sets the marquee animation refresh in ms.\n";
+    cout << "5. set_mode - switches between 'ascii' and 'screensaver' modes.\n";
+    cout << "6. exit - terminates the console.\n\n";
 }
 
 void displayMessage(const string& msg) {
-    std::lock_guard<std::mutex> lock(io_mutex);
     cout << msg << endl;
 }
 
-void displayPrompt() {
-    std::lock_guard<std::mutex> lock(io_mutex);
-    cout << "Command input: ";
-    cout.flush();
-}
-
-// Keyboard Handler
 string getCommandInput() {
     string cmd;
     cin >> cmd;
@@ -56,7 +110,7 @@ string getCommandInput() {
 
 string getTextInput() {
     string text;
-    cin.ignore(numeric_limits<streamsize>::max(), '\n');
+    cin.ignore();
     getline(cin, text);
     return text;
 }
@@ -67,29 +121,43 @@ int getIntegerInput() {
     return value;
 }
 
-// Bouncing DVD-style animation
-static HANDLE getConsoleHandle() {
-    return GetStdHandle(STD_OUTPUT_HANDLE);
-}
+// ASCII Marquee
+void marquee(int width) {
+    int pos = width;
+    while (marquee_running) {
+        vector<string> current_ascii;
+        int current_speed;
+        {
+            std::lock_guard<std::mutex> lock(marquee_mutex);
+            current_ascii = marquee_ascii;
+            current_speed = marquee_speed;
+        }
 
-static void setCursorPos(short x, short y) {
-    COORD coord{ x, y };
-    SetConsoleCursorPosition(getConsoleHandle(), coord);
-}
+        for (int row = 0; row < current_ascii.size(); row++) {
+            string ascii_line = current_ascii[row];
+            if (row == 0) {
+                size_t endpos = ascii_line.find_last_not_of(" ");
+                if (endpos != string::npos) {
+                    ascii_line = ascii_line.substr(0, endpos + 1);
+                }
+            }
+            string padded(width + ascii_line.size(), ' ');
+            int start = max(0, pos);
+            if (start < padded.size())
+                padded.replace(start, ascii_line.size(), ascii_line);
 
-static void queryConsoleSize(int& outCols, int& outRows) {
-    CONSOLE_SCREEN_BUFFER_INFO csbi;
-    if (GetConsoleScreenBufferInfo(getConsoleHandle(), &csbi)) {
-        outCols = csbi.srWindow.Right - csbi.srWindow.Left + 1;
-        outRows = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
+            cout << padded.substr(0, width) << "\n";
+        }
+
+        this_thread::sleep_for(std::chrono::milliseconds(current_speed));
+
+        pos--;
+        if (pos + (int)current_ascii[0].size() < 0) pos = width; // loop back
     }
-    else {
-        outCols = marquee_width;
-        outRows = marquee_height;
-    }
+
 }
 
-void marquee() {
+void screenSaver() {
     // initial position and direction
     int x = 0;
     int y = 0;
@@ -110,8 +178,8 @@ void marquee() {
         }
 
         const int textLen = static_cast<int>(current_text.size());
-        const int maxX = std::max(0, cols - textLen);
-        const int maxRow = std::max(0, rows - 2); // avoid last line for input
+        const int maxX = max(0, cols - textLen);
+        const int maxRow = max(0, rows - 2); // avoid last line for input
 
         // erase previous
         {
@@ -135,7 +203,6 @@ void marquee() {
             std::lock_guard<std::mutex> lock(io_mutex);
             setCursorPos(static_cast<short>(x), static_cast<short>(y));
             cout << current_text << flush;
-            // move caret back to prompt line start to reduce disruption
             setCursorPos(0, static_cast<short>(rows - 1));
         }
 
@@ -145,7 +212,7 @@ void marquee() {
     {
         std::lock_guard<std::mutex> lock(io_mutex);
         // best effort: clear entire first rows area where text might be
-        for (int r = 0; r < std::max(0, marquee_height - 1); ++r) {
+        for (int r = 0; r < max(0, marquee_height - 1); ++r) {
             setCursorPos(0, static_cast<short>(r));
             cout << string(marquee_width, ' ');
         }
@@ -157,8 +224,14 @@ void marquee() {
 void startMarquee() {
     if (!marquee_running) {
         marquee_running = true;
-        marquee_thread = std::thread(marquee);
-        displayMessage("Starting marquee...");
+        if (animation_mode == "ascii") {
+            marquee_thread = std::thread(marquee, marquee_width);
+            displayMessage("Starting ASCII marquee...");
+        }
+        else if (animation_mode == "screensaver") {
+            marquee_thread = std::thread(screenSaver);
+            displayMessage("Starting screensaver...");
+        }
     }
     else {
         displayMessage("Marquee is already running.");
@@ -178,20 +251,34 @@ void stopMarquee() {
 }
 
 int main() {
+    // Get console size
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi);
+    marquee_width = csbi.srWindow.Right - csbi.srWindow.Left + 1;
+    int rows = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
 
+    cout << "Rows: " << rows << "\n";
+    cout << "Cols: " << marquee_width << "\n";
 
     string command;
 
     // Command Interpreter Loop
     do {
         showMainMenu();
-        displayPrompt();
         command = getCommandInput();
 
         if (command == "help") {
             showHelp();
         }
         else if (command == "start_marquee") {
+            if (animation_mode == "ascii" && marquee_ascii.empty()) {
+                displayMessage("No ASCII text set. Use 'set_text' command first.");
+                continue;
+            }
+            else if (animation_mode == "screensaver" && marquee_text.empty()) {
+                displayMessage("No text set for screensaver. Use 'set_text' command first.");
+                continue;
+            }
             startMarquee();
         }
         else if (command == "stop_marquee") {
@@ -201,18 +288,31 @@ int main() {
             displayMessage("Enter text for marquee: ");
             std::string new_text = getTextInput();
             {
+                std::lock_guard<std::mutex> lock(marquee_mutex);
+                marquee_ascii = textToAscii(new_text);
                 marquee_text = new_text;
             }
-            displayMessage("Text set to: " + new_text);
+            displayMessage("Text set for both ASCII marquee and screensaver!");
         }
         else if (command == "set_speed") {
             displayMessage("Enter speed in milliseconds: ");
             int new_speed = getIntegerInput();
             {
                 std::lock_guard<std::mutex> lock(marquee_mutex);
-                marquee_speed = new_speed;
+                marquee_speed = (new_speed < 10) ? 10 : new_speed; // avoid too fast
             }
-            displayMessage("Speed set to: " + std::to_string(new_speed) + " ms");
+            displayMessage("Speed set to: " + std::to_string(marquee_speed) + " ms");
+        }
+        else if (command == "set_mode") {
+            displayMessage("Enter mode ('ascii' or 'screensaver'): ");
+            std::string new_mode = getTextInput();
+            if (new_mode == "ascii" || new_mode == "screensaver") {
+                animation_mode = new_mode;
+                displayMessage("Mode set to: " + animation_mode);
+            }
+            else {
+                displayMessage("Invalid mode. Use 'ascii' or 'screensaver'.");
+            }
         }
         else if (command == "exit") {
             displayMessage("Exiting...");
