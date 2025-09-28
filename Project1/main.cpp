@@ -143,7 +143,8 @@ void startMarquee() {
         marquee_running = true;
         marquee_thread = std::thread(marquee, marquee_width);
         displayMessage("Starting ASCII marquee...");
-    } else {
+    }
+    else {
         displayMessage("Marquee is already running.");
     }
 }
@@ -154,7 +155,8 @@ void stopMarquee() {
         if (marquee_thread.joinable())
             marquee_thread.join();
         displayMessage("Stopping marquee...");
-    } else {
+    }
+    else {
         displayMessage("Marquee is not running.");
     }
 }
@@ -180,6 +182,10 @@ int main() {
             showHelp();
         }
         else if (command == "start_marquee") {
+            if (marquee_ascii.empty()) {
+                displayMessage("No ASCII text set. Use 'set_text' command first.");
+                continue;
+            }
             startMarquee();
         }
         else if (command == "stop_marquee") {
