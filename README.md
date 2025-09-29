@@ -20,6 +20,7 @@ and marquee animation.
 - Command interpreter (CLI input loop)
 - Marquee text scrolling 
 - Adjustable marquee text (set_text)
+- Switch between screensaver or ascii art animation (set_mode)
 - Adjustable marquee speed (set_speed)
 - Help menu with list of commands
 - Exit command to terminate the program
