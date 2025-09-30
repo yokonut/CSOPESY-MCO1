@@ -64,7 +64,7 @@ HELLO WORLD
 --------------------------------
 
 
-7. File Structure
+7. File Structure (GO TO Project1 -> main.cpp)
 - main.cpp     – Entry point of the program (contains main()).
 - README.txt   – Project description and usage instructions.
 ------------------------------------------------------------
