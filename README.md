@@ -1,4 +1,4 @@
-CSOPESY – MCO2: Marquee Operator
+CSOPESY – Marquee Operator
 ================================
 
 Created by: S13 Group 5
