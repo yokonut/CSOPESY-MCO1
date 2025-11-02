@@ -96,11 +96,29 @@ struct Process {
     uint64_t delay_left = 0;
     bool attached = false; // whether a user is currently inside screen for this proc
 
-    // NEW: record creation time for nicer reports
     time_t created_time = 0;
 
     Process() {}
 };
+
+/* --------------------- Small helpers to remove duplicated parsing logic --------------------- */
+
+// returns true if s is a non-empty string consisting only of digits
+static bool is_number(const string& s) {
+    if (s.empty()) return false;
+    for (unsigned char ch : s) if (!isdigit(ch)) return false;
+    return true;
+}
+
+// Resolve an operand (either a numeric constant passed at creation time, a numeric encoded in string,
+// or a variable stored in the process). Returns 0 if variable not found.
+static uint32_t resolve_operand_value(const shared_ptr<Process>& p, const string& operand, uint64_t numeric_field, bool operand_const_flag) {
+    if (operand_const_flag) return (uint32_t)numeric_field;
+    if (is_number(operand)) return (uint32_t)stoul(operand);
+    auto it = p->vars.find(operand);
+    if (it != p->vars.end()) return it->second;
+    return 0;
+}
 
 /* --------------------- Process Table & Utilities --------------------- */
 static std::mutex procs_mtx;
@@ -310,7 +328,7 @@ void load_config(const string& cfgpath) {
 
     bool opened = false;
     Config cfg;
-    for (auto &p : candidates) {
+    for (auto& p : candidates) {
         tried.push_back(p);
         ifstream fin(p.c_str());
         if (!fin.is_open()) continue;
@@ -337,7 +355,7 @@ void load_config(const string& cfgpath) {
     if (!opened) {
         ostringstream oss;
         oss << "Could not open config.txt. Tried paths:\n";
-        for (auto &t : tried) oss << "  " << t << "\n";
+        for (auto& t : tried) oss << "  " << t << "\n";
         throw runtime_error(oss.str());
     }
 
@@ -550,7 +568,7 @@ static string fmt_time(time_t t) {
 #ifdef _WIN32
     localtime_s(&tmv, &t);
 #else
-    localtime_r(&t, &tmv);
+    localtime_r(&tmv, &t);
 #endif
     char buf[64];
     strftime(buf, sizeof(buf), "%m/%d/%Y %I:%M:%S%p", &tmv);
@@ -594,7 +612,7 @@ void cmd_screen_ls(ofstream* logfile = nullptr) {
             if (cpus[i].current && cpus[i].current.get() == p.get()) return (int)i;
         }
         return -1;
-    };
+        };
 
     for (auto& p : proc_list) {
         if (p->state == ProcState::FINISHED) continue;
