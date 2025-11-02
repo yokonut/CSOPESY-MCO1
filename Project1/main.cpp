@@ -72,6 +72,7 @@ struct Instruction {
     // Generic fields to hold operands/text:
     string a, b, c; // variable names or message
     uint64_t numeric = 0; // for constants, repeat counts, sleep ticks
+    bool c_is_const = false; // whether 'c' was provided as numeric constant at creation time
     // for FOR: numeric = repeats, and we treat sequence between FOR_START and FOR_END
 };
 
@@ -147,11 +148,13 @@ Instruction mk_declare(const string& var, uint16_t val) {
 }
 Instruction mk_add(const string& dst, const string& op1, const string& op2_or_val, bool second_is_const = false) {
     Instruction i; i.type = InstType::ADD; i.a = dst; i.b = op1; i.c = op2_or_val;
+    i.c_is_const = second_is_const;
     if (second_is_const) i.numeric = stoull(op2_or_val);
     return i;
 }
 Instruction mk_sub(const string& dst, const string& op1, const string& op2_or_val, bool second_is_const = false) {
     Instruction i; i.type = InstType::SUBTRACT; i.a = dst; i.b = op1; i.c = op2_or_val;
+    i.c_is_const = second_is_const;
     if (second_is_const) i.numeric = stoull(op2_or_val);
     return i;
 }
@@ -464,12 +467,7 @@ void scheduler_tick_loop() {
                 case InstType::ADD: {
                     uint32_t v1 = 0;
                     if (p->vars.count(ins.b)) v1 = p->vars[ins.b];
-                    uint32_t v2 = 0;
-                    // check if c is a number or var
-                    bool c_is_num = true;
-                    for (char ch : ins.c) if (!isdigit(ch)) { c_is_num = false; break; }
-                    if (c_is_num) v2 = (uint32_t)stoul(ins.c);
-                    else if (p->vars.count(ins.c)) v2 = p->vars[ins.c];
+                    uint32_t v2 = resolve_operand_value(p, ins.c, ins.numeric, ins.c_is_const);
                     uint32_t res = v1 + v2;
                     if (res > 0xFFFF) res = 0xFFFF;
                     p->vars[ins.a] = (uint16_t)res;
@@ -478,11 +476,7 @@ void scheduler_tick_loop() {
                 case InstType::SUBTRACT: {
                     uint32_t v1 = 0;
                     if (p->vars.count(ins.b)) v1 = p->vars[ins.b];
-                    uint32_t v2 = 0;
-                    bool c_is_num = true;
-                    for (char ch : ins.c) if (!isdigit(ch)) { c_is_num = false; break; }
-                    if (c_is_num) v2 = (uint32_t)stoul(ins.c);
-                    else if (p->vars.count(ins.c)) v2 = p->vars[ins.c];
+                    uint32_t v2 = resolve_operand_value(p, ins.c, ins.numeric, ins.c_is_const);
                     int32_t res = (int32_t)v1 - (int32_t)v2;
                     if (res < 0) res = 0;
                     p->vars[ins.a] = (uint16_t)res;
@@ -825,14 +819,14 @@ int main(int argc, char** argv) {
     ios::sync_with_stdio(false);
     cin.tie(nullptr);
 
-    // Print ASCII header on program start with the word CSOPESY clearly visible
+    // Print ASCII header on program start with the word CSOPESY 
     safe_print(
-        "   _____  _____  ____  _____  ______  _______     __\n"
-        "  / ____|/ ____|/ __ \|  __ \|  ____|/ ____\ \   / /\n"
-        " | |    | (___ | |  | | |__) | |__  | (___  \ \_/ / \n"
-        "| |     \___ \| |  | |  ___/|  __|  \___ \  \   /  \n"
-        "| |____ ____) | |__| | |    | |____ ____) |  | |   \n"
-        " \_____|_____/ \____/|_|    |______|_____/   |_|   \n"
+        "   _____  _____  ____  _____  ______  _______     __ \n"
+        "  / ____|/ ____|/ __ \\|  __ \\|  ____|/ ____\\ \\   / / \n"
+        " | |    | (___ | |  | | |__) | |__  | (___  \\ \\_/ /  \n"
+        " | |     \\___ \\| |  | |  ___/|  __|  \\___ \\  \\   /   \n"
+        " | |____ ____) | |__| | |    | |____ ____) |  | |    \n"
+        "  \\_____|_____/ \\____/|_|    |______|_____/   |_|    \n"
         "--------------------------------------------------------\n\n"
         
         "Welcome to CSOPESY Emulator!\n"
