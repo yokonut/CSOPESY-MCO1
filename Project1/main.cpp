@@ -34,6 +34,14 @@ void safe_print(const string& s) {
     cout << s << flush;
 }
 
+void clear_console() {
+#ifdef _WIN32
+    system("cls");
+#else
+    system("clear");
+#endif
+}
+
 static string trim(const string& s) {
     size_t a = s.find_first_not_of(" \t\r\n");
     if (a == string::npos) return "";
@@ -138,6 +146,8 @@ shared_ptr<Process> create_process(const string& name, const vector<Instruction>
     p->quantum_left = global_cfg.quantum_cycles;
     p->delay_left = 0;
     p->created_time = time(nullptr); // record creation time
+    // Initialize variable "x" with value 0
+    p->vars["x"] = 0;
     {
         lock_guard<mutex> lg(procs_mtx);
         proc_table[name] = p;
@@ -182,78 +192,28 @@ Instruction mk_for_end() { Instruction i; i.type = InstType::FOR_END; return i; 
 Instruction mk_noop() { Instruction i; i.type = InstType::NOOP; return i; }
 
 vector<Instruction> generate_random_instructions(const string& procname, uint64_t min_ins, uint64_t max_ins) {
-    uniform_int_distribution<int> inst_d(1, 6);
     uniform_int_distribution<int> len_d((int)min_ins, (int)max_ins);
+    uniform_int_distribution<int> add_val_d(1, 10); // Random value between 1-10 for ADD
     int len = len_d(rng);
     vector<Instruction> out;
-    // For simplicity, we'll generate sequences that are syntactically valid with FORs possibly nested up to 2.
-    int nested_for_allowed = 2;
-    int current_for_depth = 0;
+    
+    // Generate alternating PRINT and ADD instructions
+    // Pattern: PRINT(value from: x), ADD(x, x, random_1_10), PRINT, ADD, ...
     for (int i = 0; i < len; i++) {
-        int t = inst_d(rng);
-        if (t == 1) {
-            // PRINT
-            Instruction ins = mk_print("Hello world from " + procname + "!");
+        if (i % 2 == 0) {
+            // PRINT instruction - store variable name "x" in field b for formatting
+            Instruction ins = mk_print("Value from: ");
+            ins.b = "x"; // Store variable name to print
             out.push_back(ins);
         }
-        else if (t == 2) {
-            // DECLARE var
-            string var = "x" + to_string((rng() % 5) + 1);
-            uint16_t val = rng() % 65536;
-            out.push_back(mk_declare(var, val));
-        }
-        else if (t == 3) {
-            // ADD
-            string dst = "x" + to_string((rng() % 5) + 1);
-            string op1 = "x" + to_string((rng() % 5) + 1);
-            if (rng() % 2) {
-                string op2 = "x" + to_string((rng() % 5) + 1);
-                out.push_back(mk_add(dst, op1, op2, false));
-            }
-            else {
-                string val = to_string(rng() % 100);
-                out.push_back(mk_add(dst, op1, val, true));
-            }
-        }
-        else if (t == 4) {
-            // SUB
-            string dst = "x" + to_string((rng() % 5) + 1);
-            string op1 = "x" + to_string((rng() % 5) + 1);
-            if (rng() % 2) {
-                string op2 = "x" + to_string((rng() % 5) + 1);
-                out.push_back(mk_sub(dst, op1, op2, false));
-            }
-            else {
-                string val = to_string(rng() % 100);
-                out.push_back(mk_sub(dst, op1, val, true));
-            }
-        }
-        else if (t == 5) {
-            // SLEEP small
-            uint64_t s = (rng() % 3) + 1;
-            out.push_back(mk_sleep(s));
-        }
         else {
-            // FOR start maybe
-            if (current_for_depth < nested_for_allowed && (rng() % 2)) {
-                uint64_t repeats = 1 + (rng() % 3);
-                out.push_back(mk_for_start(repeats));
-                current_for_depth++;
-            }
-            else {
-                // end for if depth > 0
-                if (current_for_depth > 0 && (rng() % 2)) {
-                    out.push_back(mk_for_end());
-                    current_for_depth--;
-                }
-                else {
-                    out.push_back(mk_print("Hello world from " + procname + "!"));
-                }
-            }
+            // ADD instruction: x = x + random(1-10)
+            int add_val = add_val_d(rng);
+            string val_str = to_string(add_val);
+            out.push_back(mk_add("x", "x", val_str, true));
         }
     }
-    // close any open FORs
-    while (current_for_depth-- > 0) out.push_back(mk_for_end());
+    
     return out;
 }
 
@@ -402,7 +362,6 @@ void scheduler_tick_loop() {
                 }
                 auto instrs = generate_random_instructions(pname, global_cfg.min_ins, global_cfg.max_ins);
                 auto p = create_process(pname, instrs);
-                safe_print("\n[Scheduler] Generated process " + pname + " (pid " + to_string(p->pid) + ")\n> ");
             }
         }
 
@@ -437,8 +396,14 @@ void scheduler_tick_loop() {
                         continue;
                     }
                     else {
-                        p->state = ProcState::READY;
+                        // Wake up and set to RUNNING
+                        p->state = ProcState::RUNNING;
                     }
+                }
+                
+                // If process is READY on a core, set it to RUNNING
+                if (p->state == ProcState::READY) {
+                    p->state = ProcState::RUNNING;
                 }
 
                 // Simulate delays-per-exec: if delay_left > 0 we decrease it and consume tick
@@ -466,15 +431,19 @@ void scheduler_tick_loop() {
                     }
                     core.current = nullptr;
                     core.busy = false;
-                    safe_print("\n[Scheduler] Process " + p->name + " finished.\n> ");
                     continue;
                 }
                 Instruction& ins = p->instrs[p->pc];
                 // execute ins
                 switch (ins.type) {
                 case InstType::PRINT: {
-                    // message, possibly contain var placeholders? we only print message as is
-                    p->logs.push_back(ins.a);
+                    // Format message with variable value if variable name is in field b
+                    string msg = ins.a;
+                    if (!ins.b.empty() && p->vars.count(ins.b)) {
+                        // Format: "Value from: " + value of variable
+                        msg = ins.a + to_string(p->vars[ins.b]);
+                    }
+                    p->logs.push_back(msg);
                     break;
                 }
                 case InstType::DECLARE: {
@@ -577,6 +546,9 @@ static string fmt_time(time_t t) {
 
 void cmd_screen_ls(ofstream* logfile = nullptr) {
     lock_guard<mutex> lg(procs_mtx);
+    
+    // Lock scheduler mutex to safely read cpus vector
+    lock_guard<mutex> lg_sched(scheduler_mtx);
 
     // Header ASCII art that clearly prints "CSOPESY"
     ostringstream oss;
@@ -591,7 +563,13 @@ void cmd_screen_ls(ofstream* logfile = nullptr) {
     int usedcores = 0;
     for (auto& c : cpus) if (c.busy) usedcores++;
     oss << "root:\\> screen -ls\n";
-    oss << "CPU utilization: " << setw(3) << right << (global_cfg.num_cpu ? (usedcores * 100 / global_cfg.num_cpu) : 0) << "%\n";
+    // Calculate CPU utilization with proper rounding
+    int cpu_util = 0;
+    if (global_cfg.num_cpu > 0) {
+        cpu_util = (int)((usedcores * 100.0 / global_cfg.num_cpu) + 0.5); // round to nearest integer
+        if (cpu_util > 100) cpu_util = 100; // clamp to 100%
+    }
+    oss << "CPU utilization: " << setw(3) << right << cpu_util << "%\n";
     oss << "Cores used: " << usedcores << "\n";
     oss << "Cores available: " << (global_cfg.num_cpu - usedcores) << "\n\n";
     oss << "--------------------------------------------------------\n\n";
@@ -663,6 +641,8 @@ void cmd_report_util() {
 
 void screen_attach_loop(shared_ptr<Process> p) {
     if (!p) { safe_print("Process not found.\n"); return; }
+    // Clear console when entering screen session
+    clear_console();
     p->attached = true;
     safe_print("---- Attached to process " + p->name + " (pid " + to_string(p->pid) + ") ----\n");
     safe_print("Type \"process-smi\" to show status, \"exit\" to return to main console.\n");
