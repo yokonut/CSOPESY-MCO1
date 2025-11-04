@@ -828,8 +828,15 @@ int main(int argc, char** argv) {
         "--------------------------------------------------------\n\n"
         
         "Welcome to CSOPESY Emulator!\n"
-        "Available commands: initialize, exit, screen, scheduler-start, scheduler-stop, report-util\n"
-        "Type \"initialize\" to begin (reads config.txt).\n"
+        "Available commands:\n"
+        "\ninitialize\n"
+        "exit\n"
+        "screen\n"
+        "scheduler-start\n"
+        "scheduler-stop\n"
+        "report-util\n"
+
+        "\nType \"initialize\" to begin (reads config.txt).\n"
     );
 
     main_cli_loop();
