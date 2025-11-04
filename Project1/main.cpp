@@ -27,13 +27,19 @@
 
 using namespace std;
 
-/* --------------------- Utility --------------------- */
+/* ======================================================
+   Utility / Console UI implementation
+   - thread-safe printing helpers and small utilities
+   ====================================================== */
 static std::mutex cout_mtx;
+
+// Console UI: thread-safe print helper to avoid interleaved output
 void safe_print(const string& s) {
     lock_guard<std::mutex> lg(cout_mtx);
     cout << s << flush;
 }
 
+// Console UI: clear screen helper (platform-specific)
 void clear_console() {
 #ifdef _WIN32
     system("cls");
@@ -42,6 +48,7 @@ void clear_console() {
 #endif
 }
 
+// Utility: trim whitespace from user input
 static string trim(const string& s) {
     size_t a = s.find_first_not_of(" \t\r\n");
     if (a == string::npos) return "";
@@ -49,8 +56,8 @@ static string trim(const string& s) {
     return s.substr(a, b - a + 1);
 }
 
+// Utility: simple whitespace argument splitter used by command recognition
 static vector<string> split_args(const string& line) {
-    // simple whitespace split
     vector<string> out;
     istringstream iss(line);
     string t;
@@ -58,7 +65,9 @@ static vector<string> split_args(const string& line) {
     return out;
 }
 
-/* --------------------- Config --------------------- */
+/* ======================================================
+   Config (global configuration loaded by 'initialize')
+   ====================================================== */
 struct Config {
     int num_cpu = 1;
     string scheduler = "fcfs"; // fcfs or rr
@@ -72,7 +81,12 @@ struct Config {
 
 Config global_cfg;
 
-/* --------------------- Instruction & Process --------------------- */
+/* ======================================================
+   Process representation
+   - Instruction and Process data structures
+   ====================================================== */
+
+// Instruction types (simple instruction set for emulator processes)
 enum class InstType { PRINT, DECLARE, ADD, SUBTRACT, SLEEP, FOR_START, FOR_END, NOOP };
 
 struct Instruction {
@@ -81,11 +95,13 @@ struct Instruction {
     string a, b, c; // variable names or message
     uint64_t numeric = 0; // for constants, repeat counts, sleep ticks
     bool c_is_const = false; // whether 'c' was provided as numeric constant at creation time
-    // for FOR: numeric = repeats, and we treat sequence between FOR_START and FOR_END
+    // for FOR: numeric = repeats
 };
 
+// Process state enumeration
 enum class ProcState { READY, RUNNING, SLEEPING, FINISHED };
 
+// Process representation
 struct Process {
     string name;
     uint64_t pid;
@@ -96,7 +112,7 @@ struct Process {
     ProcState state = ProcState::READY;
     uint64_t remaining_sleep = 0;
     uint64_t ticks_used = 0; // total CPU ticks consumed
-    // For FOR loops we will maintain a simple stack of (pc_of_for_start, remaining_repeats)
+    // For FOR loops we maintain stack of (pc_of_for_start, remaining_repeats)
     vector<pair<size_t, uint64_t>> for_stack;
     // For RR quantum counters:
     uint64_t quantum_left = 0;
@@ -109,7 +125,7 @@ struct Process {
     Process() {}
 };
 
-/* --------------------- Small helpers to remove duplicated parsing logic --------------------- */
+/* --------------------- Small helpers --------------------- */
 
 // returns true if s is a non-empty string consisting only of digits
 static bool is_number(const string& s) {
@@ -118,8 +134,7 @@ static bool is_number(const string& s) {
     return true;
 }
 
-// Resolve an operand (either a numeric constant passed at creation time, a numeric encoded in string,
-// or a variable stored in the process). Returns 0 if variable not found.
+// Resolve operand value (constant, numeric string, or process variable)
 static uint32_t resolve_operand_value(const shared_ptr<Process>& p, const string& operand, uint64_t numeric_field, bool operand_const_flag) {
     if (operand_const_flag) return (uint32_t)numeric_field;
     if (is_number(operand)) return (uint32_t)stoul(operand);
@@ -128,12 +143,16 @@ static uint32_t resolve_operand_value(const shared_ptr<Process>& p, const string
     return 0;
 }
 
-/* --------------------- Process Table & Utilities --------------------- */
+/* ======================================================
+   Process table & utilities
+   - protects process list/map with a mutex
+   ====================================================== */
 static std::mutex procs_mtx;
 static unordered_map<string, shared_ptr<Process>> proc_table; // name -> process
 static vector<shared_ptr<Process>> proc_list; // every created proc (for listing/report)
 static std::atomic<uint64_t> next_pid{ 1 };
 
+// Create and register a new process (used by scheduler and screen -s)
 shared_ptr<Process> create_process(const string& name, const vector<Instruction>& instrs) {
     auto p = make_shared<Process>();
     p->name = name;
@@ -163,17 +182,15 @@ shared_ptr<Process> find_process(const string& name) {
     return it->second;
 }
 
-/* --------------------- Instruction Generator (for dummy processes) --------------------- */
+/* ======================================================
+   Instruction generator for dummy processes
+   - helper to create random instruction sequences
+   ====================================================== */
 std::random_device rd;
 std::mt19937 rng(rd());
 
-Instruction mk_print(const string& msg) {
-    Instruction i; i.type = InstType::PRINT; i.a = msg;
-    return i;
-}
-Instruction mk_declare(const string& var, uint16_t val) {
-    Instruction i; i.type = InstType::DECLARE; i.a = var; i.numeric = val; return i;
-}
+Instruction mk_print(const string& msg) { Instruction i; i.type = InstType::PRINT; i.a = msg; return i; }
+Instruction mk_declare(const string& var, uint16_t val) { Instruction i; i.type = InstType::DECLARE; i.a = var; i.numeric = val; return i; }
 Instruction mk_add(const string& dst, const string& op1, const string& op2_or_val, bool second_is_const = false) {
     Instruction i; i.type = InstType::ADD; i.a = dst; i.b = op1; i.c = op2_or_val;
     i.c_is_const = second_is_const;
@@ -198,16 +215,13 @@ vector<Instruction> generate_random_instructions(const string& procname, uint64_
     vector<Instruction> out;
     
     // Generate alternating PRINT and ADD instructions
-    // Pattern: PRINT(value from: x), ADD(x, x, random_1_10), PRINT, ADD, ...
     for (int i = 0; i < len; i++) {
         if (i % 2 == 0) {
-            // PRINT instruction - store variable name "x" in field b for formatting
             Instruction ins = mk_print("Value from: ");
-            ins.b = "x"; // Store variable name to print
+            ins.b = "x"; // variable to print
             out.push_back(ins);
         }
         else {
-            // ADD instruction: x = x + random(1-10)
             int add_val = add_val_d(rng);
             string val_str = to_string(add_val);
             out.push_back(mk_add("x", "x", val_str, true));
@@ -217,7 +231,10 @@ vector<Instruction> generate_random_instructions(const string& procname, uint64_
     return out;
 }
 
-/* --------------------- Scheduler --------------------- */
+/* ======================================================
+   Scheduler implementation
+   - CPUCore, scheduler loop, picking policies
+   ====================================================== */
 struct CPUCore {
     bool busy = false;
     shared_ptr<Process> current;
@@ -235,12 +252,12 @@ static condition_variable scheduler_cv;
 static atomic<uint64_t> total_ticks_consumed{ 0 }; // sum of ticks across cores
 static time_t init_time = 0;
 
+// load config from file (several candidate paths attempted)
 void load_config(const string& cfgpath) {
     vector<string> tried;
     vector<string> candidates;
     candidates.push_back(cfgpath);
 
-    // Add explicit working-directory candidate
 #ifdef _WIN32
     char cwd_buf[MAX_PATH];
     if (GetCurrentDirectoryA(MAX_PATH, cwd_buf)) {
@@ -253,7 +270,7 @@ void load_config(const string& cfgpath) {
     }
 #endif
 
-    // executable directory and its parent
+    // add executable directory candidates as well
     string exe_dir;
 #ifdef _WIN32
     char buf[MAX_PATH];
@@ -327,7 +344,7 @@ void load_config(const string& cfgpath) {
     global_cfg.valid = true;
 }
 
-/* Pick next process according to scheduler */
+/* Scheduler picker functions (policy implementations) */
 shared_ptr<Process> pick_next_process_fcfs() {
     lock_guard<mutex> lg(procs_mtx);
     for (auto& p : proc_list) {
@@ -335,24 +352,25 @@ shared_ptr<Process> pick_next_process_fcfs() {
     }
     return nullptr;
 }
-
 shared_ptr<Process> pick_next_process_rr() {
-    // round robin simplest: find first READY
+    // simple RR falls back to FCFS implementation here
     return pick_next_process_fcfs();
 }
 
+// The scheduler tick loop executes in a detached thread once initialized.
+// It simulates CPU ticks, generates batch processes, assigns processes to cores,
+// and executes one instruction per tick per busy core (with sleep/delay handling).
 void scheduler_tick_loop() {
-    // We'll simulate a CPU tick every 50ms (configurable by changing sleep).
-    const chrono::milliseconds tick_interval(50);
+    const chrono::milliseconds tick_interval(50); // 50ms per tick
     uint64_t local_tick_counter = 0;
     while (scheduler_running.load()) {
         this_thread::sleep_for(tick_interval);
         local_tick_counter++;
         cpu_tick.fetch_add(1);
-        // Generate batch process if scheduler_generating and freq divides tick
+
+        // Batch process generation (when enabled)
         if (scheduler_generating.load()) {
             if (global_cfg.batch_process_freq > 0 && (local_tick_counter % global_cfg.batch_process_freq == 0)) {
-                // create new process
                 static atomic<int> gnum{ 1 };
                 string pname;
                 {
@@ -365,10 +383,10 @@ void scheduler_tick_loop() {
             }
         }
 
-        // for each CPU core, allocate/execute
+        // Per-core scheduling and execution
         for (int cid = 0; cid < (int)cpus.size(); ++cid) {
             CPUCore& core = cpus[cid];
-            // If core is free, pick a process
+            // If core is free, pick a READY process
             if (!core.busy) {
                 shared_ptr<Process> next = nullptr;
                 if (global_cfg.scheduler == "fcfs") next = pick_next_process_fcfs();
@@ -378,7 +396,6 @@ void scheduler_tick_loop() {
                     core.busy = true;
                     next->state = ProcState::RUNNING;
                     next->quantum_left = global_cfg.quantum_cycles;
-                    // set per-instruction delay if configured
                     next->delay_left = 0;
                 }
                 else {
@@ -389,31 +406,29 @@ void scheduler_tick_loop() {
 
             if (core.busy && core.current) {
                 auto p = core.current;
-                // If sleeping, decrement
+                // Handle sleeping processes (decrement remaining_sleep)
                 if (p->state == ProcState::SLEEPING) {
                     if (p->remaining_sleep > 0) {
                         p->remaining_sleep--;
                         continue;
                     }
                     else {
-                        // Wake up and set to RUNNING
                         p->state = ProcState::RUNNING;
                     }
                 }
-                
-                // If process is READY on a core, set it to RUNNING
+
                 if (p->state == ProcState::READY) {
                     p->state = ProcState::RUNNING;
                 }
 
-                // Simulate delays-per-exec: if delay_left > 0 we decrease it and consume tick
+                // Simulate extra delays-per-exec (busy-wait simulation)
                 if (p->delay_left > 0) {
                     p->delay_left--;
                     p->ticks_used++;
                     total_ticks_consumed++;
                     p->quantum_left = (p->quantum_left > 0 ? p->quantum_left - 1 : 0);
                     if (global_cfg.scheduler == "rr" && p->quantum_left == 0) {
-                        // preempt
+                        // Preempt
                         p->state = ProcState::READY;
                         core.current = nullptr;
                         core.busy = false;
@@ -421,26 +436,25 @@ void scheduler_tick_loop() {
                     continue;
                 }
 
-                // Execute a single instruction at pc
+                // If finished all instructions, mark FINISHED
                 if (p->pc >= p->instrs.size()) {
-                    // finished
                     p->state = ProcState::FINISHED;
                     {
                         lock_guard<mutex> lg(procs_mtx);
-                        proc_table.erase(p->name); // no longer accessible via screen -r
+                        proc_table.erase(p->name); // remove from lookup; keep in proc_list for reports
                     }
                     core.current = nullptr;
                     core.busy = false;
                     continue;
                 }
+
                 Instruction& ins = p->instrs[p->pc];
-                // execute ins
+                // Execute single instruction
                 switch (ins.type) {
                 case InstType::PRINT: {
-                    // Format message with variable value if variable name is in field b
                     string msg = ins.a;
                     if (!ins.b.empty() && p->vars.count(ins.b)) {
-                        // Format: "Value from: " + value of variable
+                        // Format message with variable value
                         msg = ins.a + to_string(p->vars[ins.b]);
                     }
                     p->logs.push_back(msg);
@@ -488,7 +502,6 @@ void scheduler_tick_loop() {
                             p->pc = top.first; // when incrementing later, it'll move to start+1
                         }
                         else {
-                            // pop and continue
                             p->for_stack.pop_back();
                         }
                     }
@@ -497,23 +510,22 @@ void scheduler_tick_loop() {
                 default: break;
                 }
 
-                // simulate delay per exec
+                // optionally insert delays-per-exec (simulate heavy instruction)
                 if (global_cfg.delays_per_exec > 0) {
                     p->delay_left = global_cfg.delays_per_exec;
                 }
 
-                // advance pc
+                // advance pc and account ticks
                 p->pc++;
                 p->ticks_used++;
                 total_ticks_consumed++;
 
-                // RR quantum handling
+                // RR quantum handling: preempt if quantum exhausted
                 if (global_cfg.scheduler == "rr") {
                     if (p->quantum_left > 0) {
                         p->quantum_left--;
                     }
                     if (p->quantum_left == 0 && p->state == ProcState::RUNNING) {
-                        // preempt and move back to READY
                         p->state = ProcState::READY;
                         core.current = nullptr;
                         core.busy = false;
@@ -524,7 +536,11 @@ void scheduler_tick_loop() {
     } // end while
 }
 
-/* --------------------- CLI Interface --------------------- */
+/* ======================================================
+   Command interpreter
+   - main_cli_loop implements the command interpreter, uses
+     split_args to recognize commands, and dispatches actions
+   ====================================================== */
 
 void print_main_prompt() {
     safe_print("> ");
@@ -544,15 +560,14 @@ static string fmt_time(time_t t) {
     return string(buf);
 }
 
+// Build and print the "screen -ls" output. Uses ostringstream locally
+// to assemble a complete string and then prints atomically with safe_print.
 void cmd_screen_ls(ofstream* logfile = nullptr) {
     lock_guard<mutex> lg(procs_mtx);
-    
     // Lock scheduler mutex to safely read cpus vector
     lock_guard<mutex> lg_sched(scheduler_mtx);
 
-    // Header ASCII art that clearly prints "CSOPESY"
     ostringstream oss;
-
     oss << "Welcome to CSOPESY Emulator!\n\n";
 
     // CPU utilization summary
@@ -563,11 +578,10 @@ void cmd_screen_ls(ofstream* logfile = nullptr) {
     int usedcores = 0;
     for (auto& c : cpus) if (c.busy) usedcores++;
     oss << "root:\\> screen -ls\n";
-    // Calculate CPU utilization with proper rounding
     int cpu_util = 0;
     if (global_cfg.num_cpu > 0) {
-        cpu_util = (int)((usedcores * 100.0 / global_cfg.num_cpu) + 0.5); // round to nearest integer
-        if (cpu_util > 100) cpu_util = 100; // clamp to 100%
+        cpu_util = (int)((usedcores * 100.0 / global_cfg.num_cpu) + 0.5); // round
+        if (cpu_util > 100) cpu_util = 100;
     }
     oss << "CPU utilization: " << setw(3) << right << cpu_util << "%\n";
     oss << "Cores used: " << usedcores << "\n";
@@ -576,7 +590,6 @@ void cmd_screen_ls(ofstream* logfile = nullptr) {
 
     // Running processes (not FINISHED)
     oss << left << setw(20) << "Running processes" << "\n";
-    // column headers
     oss << left << setw(15) << "Name"
         << left << setw(26) << "Created"
         << left << setw(8) << "Core"
@@ -584,13 +597,13 @@ void cmd_screen_ls(ofstream* logfile = nullptr) {
         << " / "
         << left << setw(8) << "Total" << "\n";
 
-    // find per-process assigned core if any
+    // Helper: find which core a process is running on (if any)
     auto find_core_for = [](const shared_ptr<Process>& p)->int {
         for (size_t i = 0; i < cpus.size(); ++i) {
             if (cpus[i].current && cpus[i].current.get() == p.get()) return (int)i;
         }
         return -1;
-        };
+    };
 
     for (auto& p : proc_list) {
         if (p->state == ProcState::FINISHED) continue;
@@ -628,7 +641,7 @@ void cmd_screen_ls(ofstream* logfile = nullptr) {
     oss << "--------------------------------------------------------\n\n";
 
     string out = oss.str();
-    safe_print(out);
+    safe_print(out); // single atomic print to avoid interleaving with other threads
     if (logfile) (*logfile) << out;
 }
 
@@ -639,6 +652,8 @@ void cmd_report_util() {
     safe_print("root:\\> Report generated at C:/csopesy-log.txt!\n");
 }
 
+// Interactive per-process screen session (blocks main CLI while attached)
+// This is part of the Console UI and Command interpreter's subcommand handling.
 void screen_attach_loop(shared_ptr<Process> p) {
     if (!p) { safe_print("Process not found.\n"); return; }
     // Clear console when entering screen session
@@ -653,7 +668,7 @@ void screen_attach_loop(shared_ptr<Process> p) {
         line = trim(line);
         if (line.empty()) continue;
         if (line == "process-smi") {
-            // show status and logs
+            // Build status output then print atomically
             ostringstream oss;
             oss << "Process: " << p->name << " (pid " << p->pid << ")\n";
             string state;
@@ -682,6 +697,9 @@ void screen_attach_loop(shared_ptr<Process> p) {
     }
 }
 
+// Command interpreter (main CLI loop)
+// - performs command recognition via split_args()
+// - dispatches to initialize, screen, scheduler controls, reports, exit, etc.
 void main_cli_loop() {
     string line;
     bool running = true;
@@ -692,7 +710,6 @@ void main_cli_loop() {
         auto args = split_args(line);
         string cmd = args.size() ? args[0] : "";
         if (cmd == "exit") {
-            // terminate console
             safe_print("Exiting console...\n");
             running = false;
             break;
@@ -717,7 +734,7 @@ void main_cli_loop() {
                     << " min-ins=" << global_cfg.min_ins << " max-ins=" << global_cfg.max_ins
                     << " delays-per-exec=" << global_cfg.delays_per_exec << "\n";
                 safe_print(oss.str());
-                // start scheduler thread
+                // start scheduler thread (detached)
                 scheduler_running = true;
                 thread(scheduler_tick_loop).detach();
             }
@@ -730,7 +747,6 @@ void main_cli_loop() {
         else {
             // other commands require initialized (except exit)
             if (!initialized.load()) {
-                // Only allow "initialize" and "exit" before initialization
                 safe_print("Please run \"initialize\" first. Available commands until then: initialize, exit\n");
                 print_main_prompt();
                 continue;
@@ -739,17 +755,14 @@ void main_cli_loop() {
                 if (args.size() >= 2) {
                     string flag = args[1];
                     if (flag == "-s") {
-                        // create new process with name and attach
                         if (args.size() < 3) {
                             safe_print("Usage: screen -s <process name>\n");
                         }
                         else {
                             string pname = args[2];
-                            // create a process with instructions: for user-created screens (not scheduler generated),
-                            // create random instructions too.
                             auto instrs = generate_random_instructions(pname, global_cfg.min_ins, global_cfg.max_ins);
                             auto p = create_process(pname, instrs);
-                            // Immediately attach (clear console emulation)
+                            // Attach to new process (blocks until detached)
                             screen_attach_loop(p);
                         }
                     }
@@ -805,19 +818,21 @@ void main_cli_loop() {
             }
         }
     } // end while
-    // cleanup
+    // cleanup: stop scheduler and generator
     scheduler_running = false;
     scheduler_generating = false;
     // give scheduler thread time to exit
     this_thread::sleep_for(chrono::milliseconds(100));
 }
 
-/* --------------------- main --------------------- */
+/* ======================================================
+   main
+   ====================================================== */
 int main(int argc, char** argv) {
     ios::sync_with_stdio(false);
     cin.tie(nullptr);
 
-    // Print ASCII header on program start with the word CSOPESY 
+    // Startup banner printed via Console UI helper
     safe_print(
         "   _____  _____  ____  _____  ______  _______     __ \n"
         "  / ____|/ ____|/ __ \\|  __ \\|  ____|/ ____\\ \\   / / \n"
@@ -827,7 +842,7 @@ int main(int argc, char** argv) {
         "  \\_____|_____/ \\____/|_|    |______|_____/   |_|    \n"
         "--------------------------------------------------------\n\n"
         
-        "Welcome to CSOPESY Emulator!\n"
+        "Welcome to CSOPESY Process Scheduler!\n"
         "Available commands:\n"
         "\ninitialize\n"
         "exit\n"
