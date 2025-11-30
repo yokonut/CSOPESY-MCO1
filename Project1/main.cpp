@@ -364,7 +364,9 @@ shared_ptr<Process> create_process_with_mem(const string& name, const vector<Ins
     p->vars["x"] = 0;
     // memory fields
     p->memBytes = memBytes;
-    p->numPages = (uint32_t)(memBytes / global_cfg.mem_per_frame);
+    // compute pages using ceiling division so small allocations still occupy at least one page
+    if (global_cfg.mem_per_frame == 0) p->numPages = 0;
+    else p->numPages = (uint32_t)((memBytes + (uint32_t)global_cfg.mem_per_frame - 1) / (uint32_t)global_cfg.mem_per_frame); // updated for mo2
     {
         lock_guard<mutex> lg(procs_mtx);
         proc_table[name] = p;
@@ -618,7 +620,6 @@ void scheduler_tick_loop() {
                 // simulate delays-per-exec
                 if (global_cfg.delays_per_exec > 0) p->delay_left = global_cfg.delays_per_exec;
                 p->pc++; p->ticks_used++; total_ticks_consumed++;
-                active_cpu_ticks++;
                 // RR quantum handling
                 if (global_cfg.scheduler == "rr") {
                     if (p->quantum_left > 0) p->quantum_left--;
