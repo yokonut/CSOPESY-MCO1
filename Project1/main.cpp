@@ -556,9 +556,6 @@ void scheduler_tick_loop() {
                     uint64_t frameOffset = addr % global_cfg.mem_per_frame;
                     // validate frame/offset before indexing
                     if (!validate_frame_access(frameIdx, (size_t)frameOffset)) {
-                        // debug print for diagnosis
-                        ostringstream dbg; dbg << "DEBUG: invalid frame access in READ: frameIdx=" << frameIdx << " offset=" << frameOffset << " frames=" << frames.size() << " frameSize=" << global_cfg.mem_per_frame << "\n";
-                        safe_print(dbg.str());
                         p->memViolation = true; p->violationAddr = addr; p->violationTime = time(nullptr);
                         return false;
                     }
@@ -584,8 +581,8 @@ void scheduler_tick_loop() {
                     uint64_t frameOffset = addr % global_cfg.mem_per_frame;
                     // validate frame/offset before indexing
                     if (!validate_frame_access(frameIdx, (size_t)frameOffset)) {
-                        ostringstream dbg; dbg << "DEBUG: invalid frame access in WRITE: frameIdx=" << frameIdx << " offset=" << frameOffset << " frames=" << frames.size() << " frameSize=" << global_cfg.mem_per_frame << "\n";
-                        safe_print(dbg.str());
+                        /*ostringstream dbg; dbg << "DEBUG: invalid frame access in WRITE: frameIdx=" << frameIdx << " offset=" << frameOffset << " frames=" << frames.size() << " frameSize=" << global_cfg.mem_per_frame << "\n";
+                        safe_print(dbg.str()); */
                         p->memViolation = true; p->violationAddr = addr; p->violationTime = time(nullptr);
                         return false;
                     }
