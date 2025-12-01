@@ -218,6 +218,18 @@ static vector<uint8_t> decode_hex(const string& hexs, size_t expect_len) {
     return out;
 }
 
+// validate frame access for u16 read/write
+static bool validate_frame_access(int frameIdx, size_t offset) {
+    // ensure we safely check frame index and offset before any data indexing
+    lock_guard<mutex> lg(frames_mtx);
+    if (frameIdx < 0) return false;
+    if ((size_t)frameIdx >= frames.size()) return false;
+    const auto& f = frames[(size_t)frameIdx];
+    if (f.data.size() < 2) return false; // need at least 2 bytes for u16 accesses
+    if (offset + 1 >= f.data.size()) return false;
+    return true;
+}
+
 /* ======================================================
    Memory manager helpers
    ====================================================== */
@@ -240,8 +252,13 @@ static int pick_victim_fifo_locked() {
 
 // pageOut a frame to backing store (ownerPid, vpage)
 static void page_out_locked(int frameIdx) {
+    if (frameIdx < 0 || (size_t)frameIdx >= frames.size()) return;
     Frame &f = frames[frameIdx];
     if (f.free) return;
+    // ensure data buffer size matches configured frame size
+    if (f.data.size() != (size_t)global_cfg.mem_per_frame) {
+        f.data.assign((size_t)global_cfg.mem_per_frame, 0);
+    }
     // serialize data to hex
     string hexdata = encode_hex(f.data);
     backing_cache[f.ownerPid][f.vpage] = hexdata;
@@ -250,11 +267,14 @@ static void page_out_locked(int frameIdx) {
 
 // pageIn: fill frame from backing store for (pid, vpage)
 static void page_in_locked(int frameIdx, uint64_t pid, uint32_t vpage) {
+    if (frameIdx < 0 || (size_t)frameIdx >= frames.size()) return;
     Frame &f = frames[frameIdx];
     f.free = false;
     f.ownerPid = pid;
     f.vpage = vpage;
     f.fifo_seq = next_fifo_seq++;
+    // ensure data buffer exists with correct size before decoding
+    if (f.data.size() != (size_t)global_cfg.mem_per_frame) f.data.assign((size_t)global_cfg.mem_per_frame, 0);
     string hexdata;
     auto pit = backing_cache.find(pid);
     if (pit != backing_cache.end()) {
@@ -262,6 +282,7 @@ static void page_in_locked(int frameIdx, uint64_t pid, uint32_t vpage) {
         if (vit != pit->second.end()) hexdata = vit->second;
     }
     if (!hexdata.empty()) {
+        // decode into buffer of proper length
         f.data = decode_hex(hexdata, f.data.size());
     } else {
         // empty => zero
@@ -524,32 +545,55 @@ void scheduler_tick_loop() {
                 bool instructionExecuted = false;
                 // Helper lambda to perform READ
                 auto do_read = [&](Instruction &I)->bool {
-                    uint32_t addr; if (!parse_hex(I.b, addr)) { p->memViolation = true; p->violationAddr = 0; p->violationTime = time(nullptr); return false; }
-                    string err; int frameIdx = ensure_page_resident(p, addr, err);
+                    uint32_t addr;
+                    if (!parse_hex(I.b, addr)) {
+                        p->memViolation = true; p->violationAddr = 0; p->violationTime = time(nullptr);
+                        return false;
+                    }
+                    string err;
+                    int frameIdx = ensure_page_resident(p, addr, err);
                     if (frameIdx < 0) return false;
-                    // read 2 bytes from frame at offset
                     uint64_t frameOffset = addr % global_cfg.mem_per_frame;
+                    // validate frame/offset before indexing
+                    if (!validate_frame_access(frameIdx, (size_t)frameOffset)) {
+                        // debug print for diagnosis
+                        ostringstream dbg; dbg << "DEBUG: invalid frame access in READ: frameIdx=" << frameIdx << " offset=" << frameOffset << " frames=" << frames.size() << " frameSize=" << global_cfg.mem_per_frame << "\n";
+                        safe_print(dbg.str());
+                        p->memViolation = true; p->violationAddr = addr; p->violationTime = time(nullptr);
+                        return false;
+                    }
                     uint16_t val = 0;
                     {
                         lock_guard<mutex> lg(frames_mtx);
                         val = (uint16_t)(frames[frameIdx].data[frameOffset] | (frames[frameIdx].data[frameOffset+1] << 8));
                     }
-                    // store into variable I.a (create if not exists, but ensure symbol table constraints)
                     if (p->vars.size() < 32 || p->vars.count(I.a)) p->vars[I.a] = val;
                     return true;
                 };
+
                 auto do_write = [&](Instruction &I)->bool {
-                    uint32_t addr; if (!parse_hex(I.a, addr)) { p->memViolation = true; p->violationAddr = 0; p->violationTime = time(nullptr); return false; }
+                    uint32_t addr;
+                    if (!parse_hex(I.a, addr)) {
+                        p->memViolation = true; p->violationAddr = 0; p->violationTime = time(nullptr);
+                        return false;
+                    }
                     uint32_t val = resolve_operand_value_u16(p, I.b, I.numeric, I.c_is_const);
-                    string err; int frameIdx = ensure_page_resident(p, addr, err);
+                    string err;
+                    int frameIdx = ensure_page_resident(p, addr, err);
                     if (frameIdx < 0) return false;
                     uint64_t frameOffset = addr % global_cfg.mem_per_frame;
+                    // validate frame/offset before indexing
+                    if (!validate_frame_access(frameIdx, (size_t)frameOffset)) {
+                        ostringstream dbg; dbg << "DEBUG: invalid frame access in WRITE: frameIdx=" << frameIdx << " offset=" << frameOffset << " frames=" << frames.size() << " frameSize=" << global_cfg.mem_per_frame << "\n";
+                        safe_print(dbg.str());
+                        p->memViolation = true; p->violationAddr = addr; p->violationTime = time(nullptr);
+                        return false;
+                    }
                     {
                         lock_guard<mutex> lg(frames_mtx);
                         frames[frameIdx].data[frameOffset] = (uint8_t)(val & 0xFF);
                         frames[frameIdx].data[frameOffset+1] = (uint8_t)((val >> 8) & 0xFF);
                     }
-                    // mark dirty
                     uint32_t vpage = addr / (uint32_t)global_cfg.mem_per_frame;
                     p->dirtyPages.insert(vpage);
                     return true;
@@ -1067,5 +1111,4 @@ int main(int argc, char** argv) {
     // flush backing store on exit
     flush_backing_store();
     safe_print("Console terminated.\n");
-    return 0;
 }
