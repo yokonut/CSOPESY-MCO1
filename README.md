@@ -2,7 +2,7 @@ CSOPESY – Marquee Operator
 ================================
 
 Created by: S13 Group 5
-Lorenzo Donaire, Yohan Ko, Margaux Siongco, Wesley Sy 
+Lorenzo Donaire, Yohan Ko, Margaux Siongco, Wesley Sy, Katipunan Miguel Delos Reyes
 ------------------------------------------------------
 
 
